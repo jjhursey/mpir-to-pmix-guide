@@ -1,4 +1,4 @@
-# The MPIR Shim project
+# Resources for Tools Transitioning from MPIR to PMIx
 
 The [MPIR Process Acquisition Interface](https://www.mpi-forum.org/docs/) is an [MPI Forum](https://www.mpi-forum.org/) defined interface for debuggers to interact with MPI programs. The [PMIx Standard](https://pmix.github.io/) contains an alternative and more extensible tool interface.
 
