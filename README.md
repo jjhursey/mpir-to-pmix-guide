@@ -5,7 +5,7 @@ The [MPIR Process Acquisition Interface](https://www.mpi-forum.org/docs/) is an 
 Some PMIx-enabled launchers do not support the MPIR interface, which can be problematic for tools that have not moved from MPIR to PMIx. This project is targeted at those tools as they make their transition. The MPIR to PMIx project has the following goals:
  * Provide links to resources that help tools transition from MPIR to the PMIx tool interface,
  * Maintain a MPIR Shim written in C (to match the language of OpenPMIx) that provides most of the MPIR interface backed by the PMIx tool interface, and
- * Maintain other example software that can aid tools transition from MPIR to the PMIx tool interface.
+ * Maintain other example software that can aid tools transitioning from MPIR to the PMIx tool interface.
 
 The MPIR Shim code in this repository is meant to be an example for tools to reference when transitioning to PMIx. As such the software attempts to be structured for readability and reference. It is a fully functional MPIR Shim (see usability notes below) with an rudimentary shared library.
 
@@ -21,7 +21,7 @@ The MPIR Shim does not provide debugging capabilities by itself. It merely provi
 ## Building the MPIR Shim
 
 What you will need:
- * [OpenPMIx](https://openpmix.github.io/) v4.x or later installation (though any PMIx v4 standard compliant implementation can be used)
+ * [OpenPMIx](https://openpmix.github.io/) v4.x or later installation (though any PMIx v4 standard compliant implementation that includes the tool support can be used)
 
 ```
 ./configure --prefix=/path-to-install/mpir-shim --with-pmix=/path-to-openpmix-install
