@@ -36,13 +36,7 @@
 #include "mpirshim.h"
 
 #include <pthread.h>
-#include <dirent.h>
 #include <errno.h>
-#pragma push_macro("_GNU_SOURCE")
-#undef _GNU_SOURCE
-#define _GNU_SOURCE
-#include <libgen.h>
-#pragma pop_macro("_GNU_SOURCE")
 #include <limits.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -50,8 +44,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 
 #include <pmix_tool.h>
 
@@ -268,7 +260,6 @@ typedef struct MPIR_Shim_Condition {
     int flag;
 } MPIR_Shim_Condition;
 
-
 // Initialize/Finalize this tool
 static int initialize_as_tool(void);
 static int finalize_as_tool(void);
@@ -329,11 +320,9 @@ static void exit_handler(void);
 static void signal_handler(int signum);
 
 // Utility functions
-static void delete_directory(char *dirname);
 static void wait_for_condition(MPIR_Shim_Condition *wait_cond);
 static void post_condition(MPIR_Shim_Condition *wait_cond);
 static void release_conditions(void);
-static int setup_session_directory(void);
 static int setup_signal_handlers(void);
 
 // Command line options
@@ -346,19 +335,16 @@ static int query_application_namespace(void);
 // Release all processes in the specified namespace
 static int release_procs_in_namespace(char *namespace, pmix_rank_t rank);
 
-// Send the launch directives to the waiting launcher
-static int send_launch_directives(void);
-
 // Environment
 extern char **environ;
 
 // Useful reference
-static const int const_true = 1;
+static int const_true = 1;
 
 // Command line arguments after the mpir args
 static int num_run_args;
 static char **run_args;
-static const char *pmix_prefix = NULL;
+static char *pmix_prefix = NULL;
 static char *tool_binary_name;
 
 // General state flags
@@ -385,19 +371,16 @@ static char debug_active;
 // CLI option: Use proxy (e.g., prterun) (-p)
 static mpir_shim_mode_t mpir_mode = MPIR_SHIM_DYNAMIC_PROXY_MODE;
 
-// Session / Rendezvous paths
-static char session_dirname[_POSIX_PATH_MAX + 1];
-static char rendezvous_filename[_POSIX_PATH_MAX + 1];
-
 // PMIx names for various agents
 static pmix_proc_t tool_proc;
 static pmix_proc_t launcher_proc;
 static pmix_proc_t application_proc;
+static char launcher_namespace[PMIX_MAX_NSLEN + 1];
 
 // Synchronization controls
 static MPIR_Shim_Condition launch_complete_cond = {"launch_complete",
        PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 1};
-static MPIR_Shim_Condition launch_ready_cond = {"launch-ready",
+static MPIR_Shim_Condition ready_for_debug_cond = {"ready-for-debug",
        PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 1};
 static MPIR_Shim_Condition launch_term_cond = {"launch-terminated",
        PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 1};
@@ -409,7 +392,7 @@ static pthread_mutex_t print_lock = PTHREAD_MUTEX_INITIALIZER;
 /**
  * @name   pmix_fatal_error
  * @brief  Print a fatal error message along with the PMIx status, and exit
- * @param  rc: PMix status
+ * @param  rc: PMIx status
  * @param  format: printf-style format string for message. Additional parameters
  *           follow as needed.
  */
@@ -433,7 +416,7 @@ static void pmix_fatal_error(pmix_status_t rc, const char *format, ...)
     finalize_as_tool();
 
     exit(1);
-}  /* pmix_fatal_error */
+}
 
 /**
  * @name   debug_print
@@ -493,11 +476,12 @@ int finalize_as_tool(void)
  */
 int initialize_as_tool(void)
 {
-    int rc, n;
+    void *attr_list;
+    int rc;
     char tool_namespace[PMIX_MAX_NSLEN+1];
     pmix_info_t *attrs = NULL;
     size_t num_attrs = 0;
-    int rank = 0;
+    pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
 
@@ -507,60 +491,37 @@ int initialize_as_tool(void)
 
     PMIX_PROC_LOAD(&tool_proc, tool_namespace, 0);
 
+    PMIX_INFO_LIST_START(attr_list);
     if (MPIR_SHIM_PROXY_MODE == mpir_mode) {
-        num_attrs = 4;
-        if (NULL != pmix_prefix) {
-            ++num_attrs;
-        }
-        PMIX_INFO_CREATE(attrs, num_attrs);
-        n = 0;
-        /* Do not connect to a PMIx server yet */
-        PMIX_INFO_LOAD(&attrs[n], PMIX_TOOL_DO_NOT_CONNECT, &const_true,
-                       PMIX_BOOL);
-        n++;
-        /* We assign the unique namespace in this case */
-        PMIX_INFO_LOAD(&attrs[n], PMIX_TOOL_NSPACE, tool_namespace,
-                       PMIX_STRING);
-        n++;
-        /* We're always rank 0 */
-        PMIX_INFO_LOAD(&attrs[n], PMIX_TOOL_RANK, &rank, PMIX_UINT32);
-        n++;
+        /* Do not connect to PMIx server yet */
+        PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_TOOL_DO_NOT_CONNECT, &const_true,
+                           PMIX_BOOL);
         /* Tool is a launcher and needs rendezvous files created */
-        PMIX_INFO_LOAD(&attrs[n], PMIX_LAUNCHER, &const_true, PMIX_BOOL);
-        n++;
+        PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_LAUNCHER, &const_true, PMIX_BOOL);
     }
     else if (MPIR_SHIM_ATTACH_MODE == mpir_mode) {
-        num_attrs = 1;
-        if (NULL != pmix_prefix) {
-            ++num_attrs;
-        }
-        PMIX_INFO_CREATE(attrs, num_attrs);
-        n = 0;
         /* The PID of the target server for a tool */
-        PMIX_INFO_LOAD(&attrs[n], PMIX_SERVER_PIDINFO, &connect_pid, PMIX_PID);
-        n++;
+        PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_SERVER_PIDINFO, &connect_pid, PMIX_PID);
         session_count = 1;
     }
     else {
-        num_attrs = 0;
+        /* Attempt to connect to system server first */
+        PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_CONNECT_SYSTEM_FIRST, &const_true,
+                           PMIX_BOOL);
         session_count = 1;
     }
-
     /* If the user provided an explicit path to the PMIx install */
     if (NULL != pmix_prefix) {
-        if (0 == num_attrs) {
-            num_attrs = 1;
-            PMIX_INFO_CREATE(attrs, num_attrs);
-            n = 0;
-        }
         debug_print("PMIx Prefix: '%s'\n", pmix_prefix);
-        PMIX_INFO_LOAD(&attrs[n], PMIX_PREFIX, pmix_prefix, PMIX_STRING);
-        n++;
+        /* Set install path for PMIx install */
+        PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_PREFIX, pmix_prefix, PMIX_STRING);
     }
-
+    PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    attrs = attr_array.array;
+    num_attrs = attr_array.size;
 
     rc = PMIx_tool_init(&tool_proc, attrs, num_attrs);
-    PMIX_INFO_FREE(attrs, num_attrs);
+    PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
 
     if (PMIX_SUCCESS != rc) {
         fprintf(stderr, "Unable to initialize MPIR module, PMIx status: %s.\n",
@@ -573,7 +534,7 @@ int initialize_as_tool(void)
                 tool_proc.rank);
 
     if (MPIR_SHIM_ATTACH_MODE == mpir_mode) {
-        // Access Launcher information
+        // Access launcher information
         query_launcher_namespace();
     }
 
@@ -581,102 +542,6 @@ int initialize_as_tool(void)
 
     MPIR_SHIM_DEBUG_EXIT("");
     return STATUS_OK;
-}
-
-/**
- * @name   setup_session_directory
- * @brief  Create the directory which will contain PMIx files for this session,
- *         and set up the pathname for the PMIx rendezvous file. If the TMPDIR
- *         environment variable is set, the session directory will be created
- *         in that directory, otherwise it will be created in /tmp.
- * @return STATUS_OK if successful, otherwise STATUS_FAIL
- */
-int setup_session_directory(void)
-{
-    char *envp;
-    char *temp_dir = NULL;
-
-    MPIR_SHIM_DEBUG_ENTER("");
-
-    envp = getenv("TMPDIR");
-    if (NULL == envp) {
-        temp_dir = "/tmp";
-    }
-    else {
-        struct stat file_info;
-
-        if (0 == stat(envp, &file_info)) {
-            if (S_ISDIR(file_info.st_mode) &&
-                (S_IRWXU == (file_info.st_mode & S_IRWXU))) {
-                temp_dir = envp;
-            }
-            else {
-                temp_dir = "/tmp";
-            }
-        }
-        else {
-            fprintf(stderr, "stat failed on the TMPDIR '%s'\n", envp);
-            MPIR_SHIM_DEBUG_EXIT("");
-            return STATUS_FAIL;
-        }
-    }
-
-    snprintf(session_dirname, sizeof session_dirname, "%s/%s.session.%d.%d",
-             temp_dir, tool_binary_name, geteuid(), getpid());
-    snprintf(rendezvous_filename, sizeof rendezvous_filename, "%s/%s.rndz.%d",
-             session_dirname, tool_binary_name, getpid());
-
-    if (0 != mkdir(session_dirname, S_IRWXU)) {
-        fprintf(stderr, "An error occured creating the session directory: %s.\n",
-                strerror(errno));
-        MPIR_SHIM_DEBUG_EXIT("");
-        return STATUS_FAIL;
-    }
-
-    debug_print("session directory is %s\n", session_dirname);
-    debug_print("rendezvoud file is %s\n", rendezvous_filename);
-
-    MPIR_SHIM_DEBUG_EXIT("");
-    return STATUS_OK;
-}
-
-/**
- * @name   delete_directory
- * @brief  Recursiblely delete ths specified directory and its contents
- * @param  dirname: Pathname of the directory to be deleted.
- */
-void delete_directory(char *dirname)
-{
-    DIR *dir;
-    char name[_POSIX_PATH_MAX + 1];
-
-    MPIR_SHIM_DEBUG_ENTER("Dirname '%s'", dirname);
-
-    dir = opendir(dirname);
-    if (NULL != dir) {
-        struct dirent *entry;
-
-        entry = readdir(dir);
-        while (NULL != entry) {
-            if (DT_DIR == entry->d_type) {
-                if ((0 != strcmp(".", entry->d_name)) &&
-                    (0 != strcmp("..", entry->d_name))) {
-                    snprintf(name, sizeof name, "%s/%s", dirname,
-                             entry->d_name);
-                    delete_directory(name);
-                }
-            }
-            else {
-                snprintf(name, sizeof name, "%s/%s", dirname, entry->d_name);
-                unlink(name);
-            }
-            entry = readdir(dir);
-        }
-    }
-    closedir(dir);
-    rmdir(dirname);
-
-    MPIR_SHIM_DEBUG_EXIT("");
 }
 
 /**
@@ -740,12 +605,6 @@ void exit_handler(void)
 
     // PMIx_tool_finalize must be called to make sure the launcher exits
     finalize_as_tool();
-
-    // In connect mode there is no session directory to delete
-    if ((MPIR_SHIM_ATTACH_MODE != mpir_mode) && 
-        ('\0' != session_dirname[0]) ) {
-            delete_directory(session_dirname);
-    }
 
     if (NULL != MPIR_proctable) {
         for (i = 0; i < MPIR_proctable_size; i++) {
@@ -818,11 +677,11 @@ void release_conditions()
         pthread_cond_broadcast(&registration_cond.condition);
         registration_cond.flag = 0;
     }
-    if (1 == launch_ready_cond.flag) {
-        pthread_cond_broadcast(&launch_ready_cond.condition);
-        launch_ready_cond.flag = 0;
+    if (1 == ready_for_debug_cond.flag) {
+        pthread_cond_broadcast(&ready_for_debug_cond.condition);
+        ready_for_debug_cond.flag = 0;
     }
-    if (1 == launch_term_cond.flag) {
+    if (1 == launch_complete_cond.flag) {
         pthread_cond_broadcast(&launch_complete_cond.condition);
         launch_complete_cond.flag = 0;
     }
@@ -1038,7 +897,7 @@ void launcher_complete_handler(size_t handler_id, pmix_status_t status,
  * @param  cbdata: Data passed to this callback
  *
  * This is an event notification function that we explicitly request
- * be called when the PMIX_LAUNCHER_READY notification is issued.
+ * be called when the PMIX_READY_FOR_DEBUG notification is issued.
  */
 void launcher_ready_handler(size_t handler_id, pmix_status_t status,
                             const pmix_proc_t *source,
@@ -1053,7 +912,7 @@ void launcher_ready_handler(size_t handler_id, pmix_status_t status,
                           source ? source->rank : -1L);
 
     callback_reg_status = status;
-    post_condition(&launch_ready_cond);
+    post_condition(&ready_for_debug_cond);
 
     /*
      * Tell the event handler state machine that we are the last step.
@@ -1270,23 +1129,26 @@ int register_default_event_handler(void)
  */
 int register_launcher_complete_handler(void)
 {
-    pmix_status_t event;
     pmix_info_t *infos = NULL;
-    size_t num_infos, n;
+    void *attr_list;
+    pmix_status_t event, rc;
+    size_t num_infos;
+    pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
 
     event = PMIX_LAUNCH_COMPLETE;
 
-    num_infos = 2;
-    PMIX_INFO_CREATE(infos, num_infos);
-    n = 0;
-    /* Object to be returned whenever the registered cbfunc is invoked */
-    PMIX_INFO_LOAD(&infos[n], PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
-    n++;
-    /* String name identifying this handler */
-    PMIX_INFO_LOAD(&infos[n], PMIX_EVENT_HDLR_NAME, "LAUNCHER-COMPLETE", PMIX_STRING);
-    n++;
+    PMIX_INFO_LIST_START(attr_list);
+    /* Set object to be returned when registered callback is called */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
+    /* Set string identifying this handler */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_HDLR_NAME, "LAUNCHER-COMPLETE", PMIX_STRING);
+    PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    PMIX_INFO_LIST_RELEASE(attr_list);
+    
+    infos = attr_array.array;
+    num_infos = attr_array.size;
 
     PMIx_Register_event_handler(&event, 1,
                                 infos, num_infos,
@@ -1294,7 +1156,7 @@ int register_launcher_complete_handler(void)
                                 registration_complete_handler, 
                                 "launcher-complete-callback");
     wait_for_condition(&registration_cond);
-    PMIX_INFO_FREE(infos, num_infos);
+    PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
     if (PMIX_SUCCESS != callback_reg_status) {
         fprintf(stderr,
                "An error occurred registering launch complete callback %s.\n",
@@ -1316,23 +1178,28 @@ int register_launcher_complete_handler(void)
  */
 int register_launcher_ready_handler(void)
 {
-    pmix_status_t event;
+    void *attr_list;
     pmix_info_t *infos = NULL;
-    size_t num_infos, n;
+    pmix_status_t event, rc;
+    size_t num_infos;
+    pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
 
-    event = PMIX_LAUNCHER_READY;
+    event = PMIX_READY_FOR_DEBUG;
 
-    num_infos = 2;
-    PMIX_INFO_CREATE(infos, num_infos);
-    n = 0;
-    /* Object to be returned whenever the registered cbfunc is invoked */
-    PMIX_INFO_LOAD(&infos[n], PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
-    n++;
-    /* String name identifying this handler */
-    PMIX_INFO_LOAD(&infos[n], PMIX_EVENT_HDLR_NAME, "LAUNCHER-READY", PMIX_STRING);
-    n++;
+    PMIX_INFO_LIST_START(attr_list);
+    /* Set object to be returned when this registered callback is called */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
+    /* Set string identifying this handler */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_HDLR_NAME, "LAUNCHER-READY", PMIX_STRING);
+    /* Handle this event only when sent by the launcher process */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_AFFECTED_PROC, &launcher_proc, PMIX_PROC);
+    PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    PMIX_INFO_LIST_RELEASE(attr_list);
+
+    infos = attr_array.array;
+    num_infos = attr_array.size;
 
     PMIx_Register_event_handler(&event, 1,
                                 infos, num_infos,
@@ -1340,7 +1207,7 @@ int register_launcher_ready_handler(void)
                                 registration_complete_handler, 
                                 "launcher-ready-callback");
     wait_for_condition(&registration_cond);
-    PMIX_INFO_FREE(infos, num_infos);
+    PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
     if (PMIX_SUCCESS != callback_reg_status) {
         fprintf(stderr,
                "An error occurred registering launcher ready callback %s.\n",
@@ -1362,23 +1229,28 @@ int register_launcher_ready_handler(void)
  */
 int register_launcher_terminate_handler(void)
 {
-    pmix_status_t event;
+    void *attr_list;
     pmix_info_t *infos = NULL;
-    size_t num_infos, n;
+    pmix_status_t event, rc;
+    size_t num_infos;
+    pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
 
     event = PMIX_ERR_JOB_TERMINATED;
 
-    num_infos = 2;
-    PMIX_INFO_CREATE(infos, num_infos);
-    n = 0;
-    /* Object to be returned whenever the registered cbfunc is invoked */
-    PMIX_INFO_LOAD(&infos[n], PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
-    n++;
-    /* String name identifying this handler */
-    PMIX_INFO_LOAD(&infos[n], PMIX_EVENT_AFFECTED_PROC, &launcher_proc, PMIX_PROC);
-    n++;
+    PMIX_INFO_LIST_START(attr_list);
+    /* Set object to be returned when this registered callback is called */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
+    /* Set string identifying this callback */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_HDLR_NAME, "LAUNCHER-TERMINATED", PMIX_STRING);
+    /* Only accept termination events from the launcher process */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_AFFECTED_PROC, &launcher_proc, PMIX_PROC);
+    PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    PMIX_INFO_LIST_RELEASE(attr_list);
+
+    infos = attr_array.array;
+    num_infos = attr_array.size;
 
     PMIx_Register_event_handler(&event, 1,
                                 infos, num_infos,
@@ -1386,7 +1258,7 @@ int register_launcher_terminate_handler(void)
                                 registration_complete_handler, 
                                 "launcher-terminate-callback");
     wait_for_condition(&registration_cond);
-    PMIX_INFO_FREE(infos, num_infos);
+    PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
     if (PMIX_SUCCESS != callback_reg_status) {
         fprintf(stderr,
              "An error occurred registering launcher terminated callback %s.\n",
@@ -1408,23 +1280,27 @@ int register_launcher_terminate_handler(void)
  */
 int register_application_terminate_handler(void)
 {
-    pmix_status_t event;
+    void *attr_list;
     pmix_info_t *infos = NULL;
-    size_t num_infos, n;
+    pmix_status_t event, rc;
+    size_t num_infos;
+    pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
 
     event = PMIX_ERR_JOB_TERMINATED;
 
-    num_infos = 2;
-    PMIX_INFO_CREATE(infos, num_infos);
-    n = 0;
-    /* Object to be returned whenever the registered cbfunc is invoked */
-    PMIX_INFO_LOAD(&infos[n], PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
-    n++;
-    /* String name identifying this handler */
-    PMIX_INFO_LOAD(&infos[n], PMIX_EVENT_AFFECTED_PROC, &application_proc, PMIX_PROC);
-    n++;
+    PMIX_INFO_LIST_START(attr_list);
+    /* Set object to be returned when this registered callback is called */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
+    /* Accept termination events only from application process */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_AFFECTED_PROC, &application_proc, PMIX_PROC);
+    /* Set string identifying this callback */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_HDLR_NAME, "APPLICATION-TERMINATED", PMIX_STRING);
+    PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    PMIX_INFO_LIST_RELEASE(attr_list);
+    infos = attr_array.array;
+    num_infos = attr_array.size;
 
     PMIx_Register_event_handler(&event, 1,
                                 infos, num_infos,
@@ -1432,7 +1308,7 @@ int register_application_terminate_handler(void)
                                 registration_complete_handler, 
                                 "application-terminate-callback");
     wait_for_condition(&registration_cond);
-    PMIX_INFO_FREE(infos, num_infos);
+    PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
     if (PMIX_SUCCESS != callback_reg_status) {
         fprintf(stderr,
              "An error occurred registering application terminated callback %s.\n",
@@ -1455,15 +1331,17 @@ int register_application_terminate_handler(void)
  */
 int spawn_launcher_and_application(void)
 {
-    char launcher_namespace[PMIX_MAX_NSLEN + 1];
+//    char launcher_namespace[PMIX_MAX_NSLEN + 1];
     pmix_info_t *attrs = NULL;
-    int i, n;
+    int i;
     pmix_status_t rc;
     size_t num_attrs;
+    pmix_rank_t wildcard_rank = PMIX_RANK_WILDCARD;
     pmix_app_t app_context;
     char cwd[_POSIX_PATH_MAX + 1];
-    char * tmp = NULL;
-    pmix_envar_t envar;
+    pmix_value_t *server_uri;
+    pmix_data_array_t attr_array, directive_array;
+    void *attr_list, *directive_list;
 
     MPIR_SHIM_DEBUG_ENTER("");
 
@@ -1500,8 +1378,22 @@ int spawn_launcher_and_application(void)
     /* Just one launcher process please */
     app_context.maxprocs = 1;
 
+    if (MPIR_SHIM_ATTACH_MODE != mpir_mode) {
+        rc = PMIx_Get(&tool_proc, PMIX_SERVER_URI, NULL, 0, &server_uri);
+        if (PMIX_SUCCESS != rc) {
+            fprintf(stderr, "Failed to retrieve our URI: %s\n", PMIx_Error_string(rc));
+            return STATUS_FAIL;
+        }
+        PMIX_SETENV(rc, PMIX_LAUNCHER_RNDZ_URI, strdup(server_uri->data.string),
+                    &app_context.env);
+        if (PMIX_SUCCESS != rc) {
+            fprintf(stderr, "Failed to set URI in app environment: %s\n",
+                    PMIx_Error_string(rc));
+            return STATUS_FAIL;
+        }
+    }
     /*
-     * Copy the environment, if it's a proxy run
+     * Copy the environment, if it's proxy mode
      */
     if (MPIR_SHIM_PROXY_MODE == mpir_mode) {
         // What's the right thing to do here? If we copy the entire current 
@@ -1521,59 +1413,34 @@ int spawn_launcher_and_application(void)
         }
     }
 
-    if (MPIR_SHIM_PROXY_MODE == mpir_mode) {
-        /* Have it use this session directory */
-        PMIX_SETENV(rc, "PMIX_SERVER_TMPDIR", session_dirname, &app_context.env);
-
-        /* Have it output a specific rendezvous file */
-        // Rendezvous file is not needed in non-proxy mode since PMIx server
-        // specifies the connection URI in this case.
-        PMIX_SETENV(rc, "PMIX_LAUNCHER_RENDEZVOUS_FILE", rendezvous_filename, &app_context.env);
-    }
-
     app_context.info = NULL;
     app_context.ninfo = 0;
 
-    if (MPIR_SHIM_PROXY_MODE == mpir_mode) {
-        num_attrs = 5;
-    }
-    else {
-        num_attrs = 6;
-    }
-
-    // Spawn the launcher, for example, mpirun
-    PMIX_INFO_CREATE(attrs, num_attrs);
-    n = 0;
-    /* Map by slot */
-    PMIX_INFO_LOAD(&attrs[n], PMIX_MAPBY, "slot", PMIX_STRING);
-    n++;
-    // Forward stdout to me
-    PMIX_INFO_LOAD(&attrs[n], PMIX_FWD_STDOUT, &const_true, PMIX_BOOL);
-    n++;
-    // Forward stderr to me
-    PMIX_INFO_LOAD(&attrs[n], PMIX_FWD_STDERR, &const_true, PMIX_BOOL);
-    n++;
-    // Notify us when the job completes
-    PMIX_INFO_LOAD(&attrs[n], PMIX_NOTIFY_COMPLETION, &const_true, PMIX_BOOL);
-    n++;
-    // We are spawning a tool
-    PMIX_INFO_LOAD(&attrs[n], PMIX_SPAWN_TOOL, &const_true, PMIX_BOOL);
-    n++;
-
-    /* Tell the launcher to wait for directives */
-    asprintf(&tmp, "%s:%d", tool_proc.nspace, tool_proc.rank);
-    if (MPIR_SHIM_NONPROXY_MODE == mpir_mode) {
-        // launcher is to wait for directives
-        PMIX_ENVAR_LOAD(&envar, "PMIX_LAUNCHER_PAUSE_FOR_TOOL", tmp, ':');
-        PMIX_INFO_LOAD(&attrs[n], PMIX_SET_ENVAR, &envar, PMIX_ENVAR);
-        PMIX_ENVAR_DESTRUCT(&envar);
-        n++;
-    }
-    if (MPIR_SHIM_PROXY_MODE == mpir_mode) {
-        PMIX_SETENV(rc, "PMIX_LAUNCHER_PAUSE_FOR_TOOL", tmp, &app_context.env);
-    }
-    free(tmp);
-
+    /* Build directives to be set to launcher process */
+    PMIX_INFO_LIST_START(directive_list);
+    /* Tell application processes to block in PMIx_Init */
+    PMIX_INFO_LIST_ADD(rc, directive_list, PMIX_DEBUG_STOP_IN_INIT, &wildcard_rank,
+                       PMIX_PROC_RANK);
+    PMIX_INFO_LIST_CONVERT(rc, directive_list, &directive_array);
+    PMIX_INFO_LIST_RELEASE(directive_list);
+    PMIX_INFO_LIST_START(attr_list);
+    /* Map launcher process by slot */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_MAPBY, "slot", PMIX_STRING);
+    /* Forward sub-process stdout and stderr to this process */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_FWD_STDOUT, &const_true, PMIX_BOOL);
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_FWD_STDERR, &const_true, PMIX_BOOL);
+    /* Request notification of job completion events */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_NOTIFY_COMPLETION, &const_true, PMIX_BOOL);
+    /* Request notification of job state change events */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_NOTIFY_JOB_EVENTS, &const_true, PMIX_BOOL);
+    /* Add launcher directives to launch attributes list */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_LAUNCH_DIRECTIVES, &directive_array,
+                       PMIX_DATA_ARRAY);
+    PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    attrs = attr_array.array;
+    num_attrs = attr_array.size;
+    PMIX_INFO_LIST_RELEASE(attr_list);
+    
     /*
      * Spawn the job - the function will return when the launcher has
      * been launched.  Note that this doesn't tell us anything about
@@ -1585,7 +1452,8 @@ int spawn_launcher_and_application(void)
     PMIX_APP_DESTRUCT(&app_context);
     debug_print("PMIx_Spawn status %s launcher_namespace: %s\n",
                 PMIx_Error_string(rc), launcher_namespace);
-    PMIX_INFO_FREE(attrs, num_attrs);
+    PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
+    PMIX_DATA_ARRAY_DESTRUCT(&directive_array);
 
     if ((PMIX_SUCCESS != rc) && (PMIX_OPERATION_SUCCEEDED != rc)) {
         fprintf(stderr,
@@ -1611,56 +1479,38 @@ int spawn_launcher_and_application(void)
  */
 int connect_to_server(void)
 {
+    void *attr_list;
     pmix_info_t *attrs;
-    size_t num_attrs, n;
+    size_t num_attrs;
     pmix_status_t rc;
-    int retry_delay = 1;
-    int max_retries = 10;
+    int connect_timeout = 10;
+    pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
 
+    PMIX_LOAD_PROCID(&launcher_proc, launcher_namespace, PMIX_RANK_WILDCARD);
     /*
      * Attributes for connecting to the server.
      */
-    num_attrs = 3;
-    PMIX_INFO_CREATE(attrs, num_attrs);
-    n = 0;
-    /* Number of times to try to connect */
-    PMIX_INFO_LOAD(&attrs[n], PMIX_CONNECT_MAX_RETRIES, &max_retries,
-                   PMIX_INT32);
-    n++;
-    /* Number of seconds to wait between connect attempts */
-    PMIX_INFO_LOAD(&attrs[n], PMIX_CONNECT_RETRY_DELAY, &retry_delay,
-                   PMIX_INT32);
-    n++;
+    PMIX_INFO_LIST_START(attr_list);
+    /* Wait for completion of the connection request */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_WAIT_FOR_CONNECTION, NULL, PMIX_BOOL);
+    /* Set timeout interval for connection request */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_TIMEOUT, &connect_timeout, PMIX_UINT32);
+    PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    PMIX_INFO_LIST_RELEASE(attr_list);
 
-    if (MPIR_SHIM_PROXY_MODE == mpir_mode) {
-        debug_print("In %s, rendezvous_file=%s\n", __FUNCTION__,
-                    rendezvous_filename);
-        /* Rendezvous file passed in PMIX_LAUNCHER_RENDEZVOUS_FILE */
-        PMIX_INFO_LOAD(&attrs[n], PMIX_TOOL_ATTACHMENT_FILE,
-                       rendezvous_filename, PMIX_STRING);
-        n++;
-    }
-    else {
-        // Rendezvous file is not needed in non-proxy mode since PMIx server
-        // specifies the connection URI in this case.
-        PMIX_INFO_LOAD(&attrs[n], PMIX_CONNECT_SYSTEM_FIRST, &const_true,
-                       PMIX_BOOL);
-        n++;
-    }
-
-    rc = PMIx_tool_connect_to_server(&tool_proc, attrs, num_attrs);
-    PMIX_INFO_FREE(attrs, num_attrs);
+    attrs = attr_array.array;
+    num_attrs = attr_array.size;
+    
+    rc = PMIx_tool_set_server(&launcher_proc, attrs, num_attrs);
+    PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
     if (PMIX_SUCCESS != rc) {
         fprintf(stderr, "An error occurred connecting to PMIx server: %s.\n",
                 PMIx_Error_string(rc));
         MPIR_SHIM_DEBUG_EXIT("");
         return STATUS_FAIL;
     }
-
-    // Access Launcher information
-    query_launcher_namespace();
 
     session_count = session_count + 1;
 
@@ -1679,117 +1529,35 @@ int connect_to_server(void)
  */
 int release_procs_in_namespace(char *namespace, pmix_rank_t rank)
 {
+    void *attr_list;
     pmix_info_t *attrs;
-    size_t num_attrs, n;
+    size_t num_attrs;
     pmix_status_t rc;
     pmix_proc_t target_procs;
+    pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("Namespace '%s', rank %d", namespace, rank);
 
     PMIX_PROC_LOAD(&target_procs, namespace, rank);
-    num_attrs = 2;
-    PMIX_INFO_CREATE(attrs, 2);
-    n = 0;
-    /* Deliver to the target processes */
-    PMIX_INFO_LOAD(&attrs[n], PMIX_EVENT_CUSTOM_RANGE, &target_procs, PMIX_PROC);
-    n++;
-    /* Only non-default handlers */
-    PMIX_INFO_LOAD(&attrs[n], PMIX_EVENT_NON_DEFAULT, &const_true, PMIX_BOOL);
-    n++;
 
-    // Is PMIX_ERR_DEBUGGER_RELEASE correct? This looks like an error status
-    // not a notification code. But looking at PMIX debugger.c example it
-    // seems this is right.
+    PMIX_INFO_LIST_START(attr_list);
+    /* Send the process release request to only the specified namespace */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_CUSTOM_RANGE, &target_procs, PMIX_PROC);
+    /* Don't send request to default event handlers */
+    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_NON_DEFAULT, &const_true, PMIX_BOOL);
+    PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    PMIX_INFO_LIST_RELEASE(attr_list);
+
+    attrs = attr_array.array;
+    num_attrs = attr_array.size;
+
     rc = PMIx_Notify_event(PMIX_ERR_DEBUGGER_RELEASE,
                            NULL, PMIX_RANGE_CUSTOM,
                            attrs, num_attrs,
                            NULL, NULL);
-    PMIX_INFO_FREE(attrs, num_attrs);
+    PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
     if ((PMIX_SUCCESS != rc) && (PMIX_OPERATION_SUCCEEDED != rc)) {
         fprintf(stderr, "An error occurred resuming launcher process: %s.\n",
-                PMIx_Error_string(rc));
-        MPIR_SHIM_DEBUG_EXIT("");
-        return STATUS_FAIL;
-    }
-
-    MPIR_SHIM_DEBUG_EXIT("");
-    return STATUS_OK;
-}
-
-/**
- * @name   send_launch_directives
- * @brief  Send directives to the launcher asking that the application pause in
- *         init and that we are notified when launch completes. If running in
- *         attach mode then only the launch notification request is sent.
- * @return STATUS_OK if successful, otherwise STATUS_FAIL
- */
-int send_launch_directives(void)
-{
-    pmix_info_t *directives = NULL;
-    pmix_info_t *attrs = NULL;
-    size_t num_attrs, n;
-    pmix_data_array_t directive_array;
-    pmix_status_t rc;
-
-    MPIR_SHIM_DEBUG_ENTER("Namespace '%s', rank %d", launcher_proc.nspace, launcher_proc.rank);
-
-    /* provide a few job-level directives */
-    directive_array.type = PMIX_INFO;
-    n = 0;
-    if (MPIR_SHIM_ATTACH_MODE == mpir_mode) {
-        directive_array.size = 1;
-        PMIX_INFO_CREATE(directive_array.array, directive_array.size);
-        if( NULL == directive_array.array ) {
-            pmix_fatal_error(PMIX_ERROR, "Failed to allocate the send_launch directive array");
-        }
-        directives = (pmix_info_t*)directive_array.array;
-
-        /* Notify us that the job was launched (or when it does finally launch) */
-        PMIX_INFO_LOAD(&directives[n], PMIX_NOTIFY_LAUNCH, &const_true,
-                       PMIX_BOOL);
-        n++;
-    }
-    else {
-        directive_array.size = 2;
-        PMIX_INFO_CREATE(directive_array.array, directive_array.size);
-        if( NULL == directive_array.array ) {
-            pmix_fatal_error(PMIX_ERROR, "Failed to allocate the send_launch directive array");
-        }
-        directives = (pmix_info_t*)directive_array.array;
-
-        /* Stop the processes in PMIx_Init() */
-        PMIX_INFO_LOAD(&directives[n], PMIX_DEBUG_STOP_IN_INIT, &const_true,
-                       PMIX_BOOL);
-        n++;
-        /* Notify us when the job is launched */
-        PMIX_INFO_LOAD(&directives[n], PMIX_NOTIFY_LAUNCH, &const_true,
-                       PMIX_BOOL);
-        n++;
-    }
-
-    num_attrs = 3;
-    PMIX_INFO_CREATE(attrs, num_attrs);
-    n = 0;
-    /* The launcher's namespace, rank 0 */
-    /* Deliver to the target launcher */
-    PMIX_INFO_LOAD(&attrs[n], PMIX_EVENT_CUSTOM_RANGE, &launcher_proc, PMIX_PROC);
-    n++;
-    /* Only non-default handlers */
-    PMIX_INFO_LOAD(&attrs[n], PMIX_EVENT_NON_DEFAULT, &const_true, PMIX_BOOL);
-    n++;
-    /* Load the data array */
-    PMIX_INFO_LOAD(&attrs[n], PMIX_DEBUG_JOB_DIRECTIVES, &directive_array, 
-                   PMIX_DATA_ARRAY);
-    n++;
-
-    rc = PMIx_Notify_event(PMIX_LAUNCH_DIRECTIVE,
-                           NULL, PMIX_RANGE_CUSTOM,
-                           attrs, num_attrs,
-                           NULL, NULL);
-    PMIX_INFO_FREE(directives, directive_array.size);
-    PMIX_INFO_FREE(attrs, num_attrs);
-    if ((PMIX_SUCCESS != rc) && (PMIX_OPERATION_SUCCEEDED != rc)) {
-        fprintf(stderr, "An error occurred sending launch directives: %s.\n",
                 PMIx_Error_string(rc));
         MPIR_SHIM_DEBUG_EXIT("");
         return STATUS_FAIL;
@@ -1846,11 +1614,12 @@ int query_launcher_namespace(void)
  */
 int query_application_namespace(void)
 {
+    void *qual_list;
     pmix_info_t *namespace_query_data = NULL;
     size_t namespace_query_size;
     pmix_status_t rc;
     pmix_query_t namespace_query;
-    int n;
+    pmix_data_array_t qual_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
 
@@ -1863,16 +1632,15 @@ int query_application_namespace(void)
         return STATUS_FAIL;
     }
 
-    namespace_query.nqual = 2;
-    PMIX_INFO_CREATE(namespace_query.qualifiers, namespace_query.nqual);
-    n = 0;
-    /* Ask the launcher for the namespaces it knows of */
-    PMIX_INFO_LOAD(&namespace_query.qualifiers[n], PMIX_NSPACE,
-                   launcher_proc.nspace, PMIX_STRING);
-    n++;
-    PMIX_INFO_LOAD(&namespace_query.qualifiers[n], PMIX_RANK,
-                   &launcher_proc.rank,  PMIX_INT32);
-    n++;
+    PMIX_INFO_LIST_START(qual_list);
+    /* Set the namespace and rank to query */
+    PMIX_INFO_LIST_ADD(rc, qual_list, PMIX_NSPACE, launcher_proc.nspace, PMIX_STRING);
+    PMIX_INFO_LIST_ADD(rc, qual_list, PMIX_RANK, &launcher_proc.rank,  PMIX_INT32);
+    PMIX_INFO_LIST_CONVERT(rc, qual_list, &qual_array);
+    PMIX_INFO_LIST_RELEASE(qual_list);
+
+    namespace_query.qualifiers = qual_array.array;
+    namespace_query.nqual = qual_array.size;
 
     rc = PMIx_Query_info(&namespace_query, 1, &namespace_query_data,
                          &namespace_query_size);
@@ -2057,7 +1825,7 @@ int MPIR_Shim_common(mpir_shim_mode_t mpir_mode_, pid_t pid_, int debug_,
         return STATUS_FAIL;
     }
     if (NULL != pmix_prefix_) {
-        pmix_prefix = pmix_prefix_;
+        pmix_prefix = (char *) pmix_prefix_;
     }
     debug_print("Launcher '%s', performing a %s\n", tool_binary_name,
                 (MPIR_SHIM_PROXY_MODE == mpir_mode ? "proxy run" : 
@@ -2087,15 +1855,6 @@ int MPIR_Shim_common(mpir_shim_mode_t mpir_mode_, pid_t pid_, int debug_,
     }
 
     /*
-     * If we are not connecting to another pid, then setup the session directory
-     */
-    if (MPIR_SHIM_ATTACH_MODE != mpir_mode) {
-        if (STATUS_FAIL == setup_session_directory()) {
-            return STATUS_FAIL;
-        }
-    }
-
-    /*
      * Register the default event handler.
      */
     if( STATUS_OK != register_default_event_handler() ) {
@@ -2122,31 +1881,6 @@ int MPIR_Shim_common(mpir_shim_mode_t mpir_mode_, pid_t pid_, int debug_,
             }
         }
 
-        // There's apparently a restriction, noted in the mpir-shim git log
-        // entry dated 3/29/20 that states the launch complete and launch
-        // terminate callbacks can't be registered until after this code
-        // connects to the server.
-        /*
-         * Register for the "launcher is ready to communicate" event.
-         */
-        if (STATUS_FAIL == register_launcher_ready_handler() ) {
-            return STATUS_FAIL;
-        }
-
-        /*
-         * Register for the "launcher has completed launching" event.
-         */
-        if (STATUS_FAIL == register_launcher_complete_handler() ) {
-            return STATUS_FAIL;
-        }
-
-        /*
-         * Wait here for the launcher to declare itself ready.
-         */
-        debug_print("Waiting for launcher to become ready\n");
-        wait_for_condition(&launch_ready_cond);
-        debug_print("Launcher is ready\n");
-
         /*
          * Register for the "launcher has terminated" event.
          * In a 'proxy' (prun) scenario this will tell us when everything is done
@@ -2155,20 +1889,32 @@ int MPIR_Shim_common(mpir_shim_mode_t mpir_mode_, pid_t pid_, int debug_,
             return STATUS_FAIL;
         }
 
+        // There's apparently a restriction, noted in the mpir-shim git log
+        // entry dated 3/29/20 that states the launch complete and launch
+        // terminate callbacks can't be registered until after this code
+        // connects to the server.
         /*
-         * Send the launch directives.
+         * Register for the "launcher is ready for debug" event.
          */
-        if (STATUS_FAIL == send_launch_directives()) {
+        if (STATUS_FAIL == register_launcher_ready_handler() ) {
             return STATUS_FAIL;
         }
 
+        if (STATUS_FAIL == release_procs_in_namespace(launcher_proc.nspace, 0)) {
+            return STATUS_FAIL;
+        }
         /*
-         * Wait for the launcher to launch the job and get the namespace of
-         * the application.
+         * Register for the "launcher has completed launching" event.
          */
-        debug_print("Wait for launch to complete\n");
-        wait_for_condition(&launch_complete_cond);
-        debug_print("Launch complete\n");
+        if (STATUS_FAIL == register_launcher_complete_handler() ) {
+            return STATUS_FAIL;
+        }
+        /*
+         * Wait here for the launcher to declare itself ready for debug.
+         */
+        debug_print("Waiting for launcher to become ready for debug\n");
+        wait_for_condition(&ready_for_debug_cond);
+        debug_print("Launcher is ready for debug\n");
 
         // At this point we have the application info in 'application_proc'
 
@@ -2191,13 +1937,6 @@ int MPIR_Shim_common(mpir_shim_mode_t mpir_mode_, pid_t pid_, int debug_,
             if (STATUS_FAIL == register_application_terminate_handler() ) {
                 return STATUS_FAIL;
             }
-        }
-
-        /*
-         * Release the launcher process and allow it to run.
-         */
-        if (STATUS_FAIL == release_procs_in_namespace(launcher_proc.nspace, 0)) {
-            return STATUS_FAIL;
         }
 
 #ifndef MPIR_SHIM_TESTCASE
@@ -2274,7 +2013,7 @@ int MPIR_Shim_common(mpir_shim_mode_t mpir_mode_, pid_t pid_, int debug_,
 #include "mpirshim_test.h"
 
 /**
- * @name   MPIR_release_application
+ * @name   MPIR_Shim_release_application
  * @brief  Release application processes from hold in MPI_Init so they may
  *         contine execution.
  * @return STATUS_OK if successful, STATUS_FAIL otherwise

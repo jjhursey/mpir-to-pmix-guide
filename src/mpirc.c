@@ -198,8 +198,8 @@ static void mpir_version_hook(FILE *stream, struct argp_state *state)
  * the MPIR symbols.  When "mpirc" starts running, it uses PMIx to launch
  * "mpirun", which in turn will launch the "mpi-program".  When "mpirc"
  * receives the program-launch PMIx event, it extracts the process table
- * from PMIx, fills in the MPIR_proctable[], and calls MPIR_breakpoint.
- * When "mpirc" hits the MPIR_breakpoint, TotalView extracts the MPI
+ * from PMIx, fills in the MPIR_proctable[], and calls MPIR_Breakpoint.
+ * When "mpirc" hits the MPIR_Breakpoint, TotalView extracts the MPI
  * process information from the MPIR_proctable[] and attaches to the
  * processes in the job.
  *
