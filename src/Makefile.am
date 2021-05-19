@@ -1,6 +1,6 @@
 #
 # Copyright (c) 2020      Intel, Inc.  All rights reserved.
-# Copyright (c) 2020      IBM Corporation.  All rights reserved.
+# Copyright (c) 2021      IBM Corporation.  All rights reserved.
 # $COPYRIGHT$
 #
 # Additional copyrights may follow
@@ -28,7 +28,7 @@ mpirc_SOURCES = mpirc.c include/mpirshim.h
 mpirc_CFLAGS = $(pmix_CFLAGS)
 mpirc_CPPFLAGS = $(pmix_CPPFLAGS)
 mpirc_LDFLAGS = $(pmix_LDFLAGS) -static
-mpirc_LDADD =  $(pmix_LIBS) $(top_builddir)/src/libmpirshim.la
+mpirc_LDADD =  $(pmix_LIBS) libmpirshim.la
 
 #
 # Testing library
