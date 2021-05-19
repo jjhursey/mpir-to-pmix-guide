@@ -1,4 +1,5 @@
 #!/bin/sh
+# Script to run MPIR shim testcases
 ./launch_test
 if [ $? -ne 0 ] ; then
     echo "ERROR: shim launch test failed"
