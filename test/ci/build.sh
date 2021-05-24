@@ -27,7 +27,7 @@ do
     echo "=========================="
     echo "Building PMIx ${program}"
     echo "=========================="
-    ${PCC} -Wall -g -o ${program} -I../../src/include ${program}.c ../../src/libmpirshimtest_la-mpirshim.o
+    ${PCC} -Wall -g -o ${program} -I../../src/include ${program}.c -L../../src/.libs -lmpirshimtest
     if [ $? -ne 0 ] ; then
         echo "Compilation of $program failed"
         exit 1
