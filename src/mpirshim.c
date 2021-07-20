@@ -1950,6 +1950,26 @@ int MPIR_Shim_common(mpir_shim_mode_t mpir_mode_, pid_t pid_, int debug_,
             return STATUS_FAIL;
         }
 #endif
+
+        /*
+         * Wait for the launcher to terminate.
+         */
+        debug_print("Waiting for launcher to terminate\n");
+        wait_for_condition(&launch_term_cond);
+        debug_print("Launcher terminated\n");
+
+        /*
+         * Finalize as a PMIx tool.
+         */
+        debug_print("Finalizing as a PMIx tool\n");
+        (void) finalize_as_tool();
+
+        /*
+         * If the launcher returned an exit code, pass it along,
+         * otherwise exit with 0.
+         */
+        debug_print("Exiting with status %d\n", launcher_exit_code);
+        return launcher_exit_code;
     }
     /*
      * If we are connecting to a running PID
@@ -1976,32 +1996,13 @@ int MPIR_Shim_common(mpir_shim_mode_t mpir_mode_, pid_t pid_, int debug_,
         }
 
         /*
-         * Register for the "application has terminated" event.
+         * Finalize as a PMIx tool.
          */
-        if (STATUS_FAIL == register_application_terminate_handler() ) {
-            return STATUS_FAIL;
-        }
+        debug_print("Finalizing as a PMIx tool\n");
+        (void) finalize_as_tool();
+
+        return 0;
     }
-
-    /*
-     * Wait for the launcher to terminate.
-     */
-    debug_print("Waiting for launcher to terminate\n");
-    wait_for_condition(&launch_term_cond);
-    debug_print("Launcher terminated\n");
-
-    /*
-     * Finalize as a PMIx tool.
-     */
-    debug_print("Finalizing as a PMIx tool\n");
-    (void) finalize_as_tool();
-
-    /*
-     * If the launcher returned an exit code, pass it along,
-     * otherwise exit with 0.
-     */
-    debug_print("Exiting with status %d\n", launcher_exit_code);
-    return launcher_exit_code;
 }
 
 
