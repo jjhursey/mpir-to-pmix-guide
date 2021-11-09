@@ -9,14 +9,11 @@ Some PMIx-enabled launchers do not support the MPIR interface, which can be prob
 
 The MPIR Shim code in this repository is meant to be an example for tools to reference when transitioning to PMIx. As such the software attempts to be structured for readability and reference. It is a fully functional MPIR Shim (see usability notes below) with an rudimentary shared library.
 
-For a production oriented version of the MPIR Shim look to the [MPI Shim](https://github.com/openpmix/mpir-shim) repository which contains a C++ version of the tool that has been used in production environments.
-
 The MPIR Shim does not provide debugging capabilities by itself. It merely provides the symbols and back end functionality to support tools that may choose to use those systems.
 
 ## Documentation
 
  * PMIx Standard v4 and later contain the necessary functionality for PMIx tools: https://github.com/pmix/pmix-standard/
- * The production oriented MPIR Shim: https://github.com/openpmix/mpir-shim
 
 ## Building the MPIR Shim
 
