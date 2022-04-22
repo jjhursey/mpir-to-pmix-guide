@@ -16,6 +16,7 @@
  * Copyright (c) 2013-2020 Intel, Inc.  All rights reserved.
  * Copyright (c) 2015      Mellanox Technologies, Inc.  All rights reserved.
  * Copyright (c) 2020      IBM Corporation.  All rights reserved.
+ * Copyright (c) 2022      Nanook Consulting.  All rights reserved.
  * $COPYRIGHT$
  *
  * Additional copyrights may follow
@@ -1379,7 +1380,11 @@ int spawn_launcher_and_application(void)
     app_context.maxprocs = 1;
 
     if (MPIR_SHIM_ATTACH_MODE != mpir_mode) {
+#ifdef PMIX_MYSERVER_URI
+        rc = PMIx_Get(&tool_proc, PMIX_MYSERVER_URI, NULL, 0, &server_uri);
+#else
         rc = PMIx_Get(&tool_proc, PMIX_SERVER_URI, NULL, 0, &server_uri);
+#endif
         if (PMIX_SUCCESS != rc) {
             fprintf(stderr, "Failed to retrieve our URI: %s\n", PMIx_Error_string(rc));
             return STATUS_FAIL;
