@@ -63,11 +63,11 @@ static void debug_print(char *format, ...);
 /* Funtion entry and exit tracing */
 #define MPIR_SHIM_DEBUG_ENTER(...) { MPIR_SHIM_DEBUG_ENTER_(__VA_ARGS__, ""); }
 #define MPIR_SHIM_DEBUG_ENTER_(format, ...)                             \
-    debug_print(">>> ENTER (%s): " format "\n", __FUNCTION__, ##__VA_ARGS__);
+    debug_print(">>> ENTER (%s): " format "\n", __func__, ##__VA_ARGS__);
 
 #define MPIR_SHIM_DEBUG_EXIT(...) { MPIR_SHIM_DEBUG_EXIT_(__VA_ARGS__, ""); }
 #define MPIR_SHIM_DEBUG_EXIT_(format, ...)                             \
-    debug_print("<<< EXIT  (%s): " format "\n", __FUNCTION__, ##__VA_ARGS__);
+    debug_print("<<< EXIT  (%s): " format "\n", __func__, ##__VA_ARGS__);
 
 
 /**********************************************************************
