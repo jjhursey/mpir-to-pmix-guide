@@ -1424,8 +1424,7 @@ int spawn_launcher_and_application(void)
     /* Build directives to be set to launcher process */
     PMIX_INFO_LIST_START(directive_list);
     /* Tell application processes to block in PMIx_Init */
-    PMIX_INFO_LIST_ADD(rc, directive_list, PMIX_DEBUG_STOP_IN_INIT, &wildcard_rank,
-                       PMIX_PROC_RANK);
+    PMIX_INFO_LIST_ADD(rc, directive_list, PMIX_DEBUG_STOP_IN_INIT, NULL, PMIX_BOOL);
     PMIX_INFO_LIST_CONVERT(rc, directive_list, &directive_array);
     PMIX_INFO_LIST_RELEASE(directive_list);
     PMIX_INFO_LIST_START(attr_list);
