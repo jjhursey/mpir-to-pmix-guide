@@ -1667,6 +1667,7 @@ int connect_to_server(void)
     size_t num_attrs;
     pmix_status_t rc;
     int connect_timeout = 10;
+    int timeout_elapsed = 0, sleep_rc;
     pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
@@ -1678,18 +1679,45 @@ int connect_to_server(void)
     PMIX_INFO_LIST_START(attr_list);
     /* Wait for completion of the connection request */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_WAIT_FOR_CONNECTION, NULL, PMIX_BOOL);
-    /* Set timeout interval for connection request */
-    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_TIMEOUT, &connect_timeout, PMIX_UINT32);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_WAIT_FOR_CONNECTION) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
+    /* Set timeout interval for connection request
+     * Note: gdb + libevent timer delay are not playing well together.
+     *   See: https://github.com/openpmix/mpir-to-pmix-guide/issues/25#issuecomment-1299308817
+     * As a work around add the timeout loop here instead of using the one inside PMIx
+     */
+    //PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_TIMEOUT, &connect_timeout, PMIX_INT);
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(attr_list);
 
     attrs = attr_array.array;
     num_attrs = attr_array.size;
-    
-    rc = PMIx_tool_set_server(&launcher_proc, attrs, num_attrs);
+
+    while (timeout_elapsed < connect_timeout) {
+        rc = PMIx_tool_set_server(&launcher_proc, attrs, num_attrs);
+        if (rc == PMIX_SUCCESS) {
+            break;
+        }
+        do {
+            sleep_rc = sleep(1); // returns non-zero if interrupted
+        } while(0 != sleep_rc);
+        timeout_elapsed++;
+    }
+
     PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
     if (PMIX_SUCCESS != rc) {
-        fprintf(stderr, "An error occurred connecting to PMIx server: %s.\n",
+        fprintf(stderr, "An error occurred connecting to PMIx server (retried for %d of %d seconds): %s.\n",
+                timeout_elapsed, connect_timeout,
                 PMIx_Error_string(rc));
         MPIR_SHIM_DEBUG_EXIT("");
         return STATUS_FAIL;
