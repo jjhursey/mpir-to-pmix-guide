@@ -497,18 +497,42 @@ int initialize_as_tool(void)
         /* Do not connect to PMIx server yet */
         PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_TOOL_DO_NOT_CONNECT, &const_true,
                            PMIX_BOOL);
+        if (rc != PMIX_SUCCESS) {
+            fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_TOOL_DO_NOT_CONNECT) failed: %s",
+                    PMIx_Error_string(rc));
+            MPIR_SHIM_DEBUG_EXIT("");
+            return STATUS_FAIL;
+        }
         /* Tool is a launcher and needs rendezvous files created */
         PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_LAUNCHER, &const_true, PMIX_BOOL);
+        if (rc != PMIX_SUCCESS) {
+            fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_LAUNCHER) failed: %s",
+                    PMIx_Error_string(rc));
+            MPIR_SHIM_DEBUG_EXIT("");
+            return STATUS_FAIL;
+        }
     }
     else if (MPIR_SHIM_ATTACH_MODE == mpir_mode) {
         /* The PID of the target server for a tool */
         PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_SERVER_PIDINFO, &connect_pid, PMIX_PID);
+        if (rc != PMIX_SUCCESS) {
+            fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_SERVER_PIDINFO) failed: %s",
+                    PMIx_Error_string(rc));
+            MPIR_SHIM_DEBUG_EXIT("");
+            return STATUS_FAIL;
+        }
         session_count = 1;
     }
     else {
         /* Attempt to connect to system server first */
         PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_CONNECT_SYSTEM_FIRST, &const_true,
                            PMIX_BOOL);
+        if (rc != PMIX_SUCCESS) {
+            fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_CONNECT_SYSTEM_FIRST) failed: %s",
+                    PMIx_Error_string(rc));
+            MPIR_SHIM_DEBUG_EXIT("");
+            return STATUS_FAIL;
+        }
         session_count = 1;
     }
     /* If the user provided an explicit path to the PMIx install */
@@ -516,8 +540,20 @@ int initialize_as_tool(void)
         debug_print("PMIx Prefix: '%s'\n", pmix_prefix);
         /* Set install path for PMIx install */
         PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_PREFIX, pmix_prefix, PMIX_STRING);
+        if (rc != PMIX_SUCCESS) {
+            fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_PREFIX) failed: %s",
+                    PMIx_Error_string(rc));
+            MPIR_SHIM_DEBUG_EXIT("");
+            return STATUS_FAIL;
+        }
     }
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     attrs = attr_array.array;
     num_attrs = attr_array.size;
 
@@ -1143,9 +1179,27 @@ int register_launcher_complete_handler(void)
     PMIX_INFO_LIST_START(attr_list);
     /* Set object to be returned when registered callback is called */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_RETURN_OBJECT) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Set string identifying this handler */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_HDLR_NAME, "LAUNCHER-COMPLETE", PMIX_STRING);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_HDLR_NAME) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(attr_list);
     
     infos = attr_array.array;
@@ -1192,11 +1246,35 @@ int register_launcher_ready_handler(void)
     PMIX_INFO_LIST_START(attr_list);
     /* Set object to be returned when this registered callback is called */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_RETURN_OBJECT) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Set string identifying this handler */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_HDLR_NAME, "LAUNCHER-READY", PMIX_STRING);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_HDLR_NAME) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Handle this event only when sent by the launcher process */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_AFFECTED_PROC, &launcher_proc, PMIX_PROC);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_AFFECTED_PROC) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(attr_list);
 
     infos = attr_array.array;
@@ -1243,11 +1321,35 @@ int register_launcher_terminate_handler(void)
     PMIX_INFO_LIST_START(attr_list);
     /* Set object to be returned when this registered callback is called */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_RETURN_OBJECT) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Set string identifying this callback */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_HDLR_NAME, "LAUNCHER-TERMINATED", PMIX_STRING);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_HDLR_NAME) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Only accept termination events from the launcher process */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_AFFECTED_PROC, &launcher_proc, PMIX_PROC);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_AFFECTED_PROC) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(attr_list);
 
     infos = attr_array.array;
@@ -1294,11 +1396,35 @@ int register_application_terminate_handler(void)
     PMIX_INFO_LIST_START(attr_list);
     /* Set object to be returned when this registered callback is called */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_RETURN_OBJECT, (void *)&registration_cond, PMIX_POINTER);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_RETURN_OBJECT) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Accept termination events only from application process */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_AFFECTED_PROC, &application_proc, PMIX_PROC);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_AFFECTED_PROC) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Set string identifying this callback */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_HDLR_NAME, "APPLICATION-TERMINATED", PMIX_STRING);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_HDLR_NAME) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(attr_list);
     infos = attr_array.array;
     num_infos = attr_array.size;
@@ -1337,7 +1463,6 @@ int spawn_launcher_and_application(void)
     int i;
     pmix_status_t rc;
     size_t num_attrs;
-    pmix_rank_t wildcard_rank = PMIX_RANK_WILDCARD;
     pmix_app_t app_context;
     char cwd[_POSIX_PATH_MAX + 1];
     pmix_value_t *server_uri;
@@ -1425,22 +1550,76 @@ int spawn_launcher_and_application(void)
     PMIX_INFO_LIST_START(directive_list);
     /* Tell application processes to block in PMIx_Init */
     PMIX_INFO_LIST_ADD(rc, directive_list, PMIX_DEBUG_STOP_IN_INIT, NULL, PMIX_BOOL);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_DEBUG_STOP_IN_INIT) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_CONVERT(rc, directive_list, &directive_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(directive_list);
     PMIX_INFO_LIST_START(attr_list);
     /* Map launcher process by slot */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_MAPBY, "slot", PMIX_STRING);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_MAPBY) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Forward sub-process stdout and stderr to this process */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_FWD_STDOUT, &const_true, PMIX_BOOL);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_FWD_STDOUT) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_FWD_STDERR, &const_true, PMIX_BOOL);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_FWD_STDERR) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Request notification of job completion events */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_NOTIFY_COMPLETION, &const_true, PMIX_BOOL);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_NOTIFY_COMPLETION) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Request notification of job state change events */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_NOTIFY_JOB_EVENTS, &const_true, PMIX_BOOL);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_NOTIFY_JOB_EVENTS) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Add launcher directives to launch attributes list */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_LAUNCH_DIRECTIVES, &directive_array,
                        PMIX_DATA_ARRAY);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_LAUNCH_DIRECTIVES) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     attrs = attr_array.array;
     num_attrs = attr_array.size;
     PMIX_INFO_LIST_RELEASE(attr_list);
@@ -1488,6 +1667,7 @@ int connect_to_server(void)
     size_t num_attrs;
     pmix_status_t rc;
     int connect_timeout = 10;
+    int timeout_elapsed = 0, sleep_rc;
     pmix_data_array_t attr_array;
 
     MPIR_SHIM_DEBUG_ENTER("");
@@ -1499,18 +1679,45 @@ int connect_to_server(void)
     PMIX_INFO_LIST_START(attr_list);
     /* Wait for completion of the connection request */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_WAIT_FOR_CONNECTION, NULL, PMIX_BOOL);
-    /* Set timeout interval for connection request */
-    PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_TIMEOUT, &connect_timeout, PMIX_UINT32);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_WAIT_FOR_CONNECTION) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
+    /* Set timeout interval for connection request
+     * Note: gdb + libevent timer delay are not playing well together.
+     *   See: https://github.com/openpmix/mpir-to-pmix-guide/issues/25#issuecomment-1299308817
+     * As a work around add the timeout loop here instead of using the one inside PMIx
+     */
+    //PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_TIMEOUT, &connect_timeout, PMIX_INT);
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(attr_list);
 
     attrs = attr_array.array;
     num_attrs = attr_array.size;
-    
-    rc = PMIx_tool_set_server(&launcher_proc, attrs, num_attrs);
+
+    while (timeout_elapsed < connect_timeout) {
+        rc = PMIx_tool_set_server(&launcher_proc, attrs, num_attrs);
+        if (rc == PMIX_SUCCESS) {
+            break;
+        }
+        do {
+            sleep_rc = sleep(1); // returns non-zero if interrupted
+        } while(0 != sleep_rc);
+        timeout_elapsed++;
+    }
+
     PMIX_DATA_ARRAY_DESTRUCT(&attr_array);
     if (PMIX_SUCCESS != rc) {
-        fprintf(stderr, "An error occurred connecting to PMIx server: %s.\n",
+        fprintf(stderr, "An error occurred connecting to PMIx server (retried for %d of %d seconds): %s.\n",
+                timeout_elapsed, connect_timeout,
                 PMIx_Error_string(rc));
         MPIR_SHIM_DEBUG_EXIT("");
         return STATUS_FAIL;
@@ -1547,9 +1754,27 @@ int release_procs_in_namespace(char *namespace, pmix_rank_t rank)
     PMIX_INFO_LIST_START(attr_list);
     /* Send the process release request to only the specified namespace */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_CUSTOM_RANGE, &target_procs, PMIX_PROC);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_CUSTOM_RANGE) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     /* Don't send request to default event handlers */
     PMIX_INFO_LIST_ADD(rc, attr_list, PMIX_EVENT_NON_DEFAULT, &const_true, PMIX_BOOL);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_EVENT_NON_DEFAULT) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_CONVERT(rc, attr_list, &attr_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(attr_list);
 
     attrs = attr_array.array;
@@ -1639,8 +1864,26 @@ int query_application_namespace(void)
     PMIX_INFO_LIST_START(qual_list);
     /* Set the namespace and rank to query */
     PMIX_INFO_LIST_ADD(rc, qual_list, PMIX_NSPACE, launcher_proc.nspace, PMIX_STRING);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_NSPACE) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_ADD(rc, qual_list, PMIX_RANK, &launcher_proc.rank,  PMIX_INT32);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_ADD(PMIX_RANK) failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_CONVERT(rc, qual_list, &qual_array);
+    if (rc != PMIX_SUCCESS) {
+        fprintf(stderr, "PMIX_INFO_LIST_CONVERT failed: %s",
+                PMIx_Error_string(rc));
+        MPIR_SHIM_DEBUG_EXIT("");
+        return STATUS_FAIL;
+    }
     PMIX_INFO_LIST_RELEASE(qual_list);
 
     namespace_query.qualifiers = qual_array.array;
